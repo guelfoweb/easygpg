@@ -23,3 +23,6 @@ License: Beerware
 
 Source code: https://github.com/guelfoweb/easygpg
 ```
+
+## Note
+Tested on BackBox Linux 4.4
