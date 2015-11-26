@@ -1,0 +1,176 @@
+#/bin/bash
+
+################################################################
+#
+# EasyGPG v.0.1
+#
+# Author: Gianni 'guelfoweb' Amato
+# Email: guelfoweb@gmail.com
+# KeyID: 490563B4
+#
+# "Developed for personal use. I hope will be useful to others".
+#
+# License: Beerware
+#
+# Source code: https://github.com/guelfoweb/easygpg
+#
+################################################################
+
+function zenity_check {
+	path_to_executable=$(which zenity)
+	 if [ ! -x "$path_to_executable" ] ; then
+		echo "Check failed: Zenity program not found."
+		exit
+	 fi
+}
+
+function gpg_check {
+	path_to_executable=$(which gpg)
+	 if [ ! -x "$path_to_executable" ] ; then
+		echo "Check failed: GPG program not found."
+		exit
+	 fi
+}
+
+function import_public_keylist {
+	gpg --list-key | sort | uniq | grep uid | sed 's/uid *//' | sed 's/ (.*)//' | sed 's/ </:/' | sed 's/>//' > keylist.tmp
+	array_public_key=()
+	while IFS= read -r line; do
+		name=$(echo $line | cut -d: -f1)
+		email=$(echo $line | cut -d: -f2)
+
+		email_detail=$(gpg --list-keys $email | grep pub | sed 's/pub\s*//' | sed 's/\s\|\//:/g')
+		size=$(echo $email_detail | cut -d: -f1)
+		keyid=$(echo $email_detail | cut -d: -f2)
+		date=$(echo $email_detail | cut -d: -f3)
+
+		array_public_key=("${array_public_key[@]}" "FALSE" "${name:0:30}" "$email" "$size" "$keyid" "$date")
+	done < keylist.tmp
+	rm keylist.tmp
+}
+
+function import_secret_keylist {
+	gpg --list-secret-keys | grep uid | sed 's/uid *//' | sed 's/(.*)//' | sort | uniq | sed 's/ (.*)//' | sed 's/ </:/' | sed 's/>//' > secretkeylist.tmp
+	array_secret_key=()
+	while IFS= read -r line; do
+		name=$(echo $line | cut -d: -f1)
+		email=$(echo $line | cut -d: -f2)
+
+		email_detail=$(gpg --list-secret-keys $email | grep sec | grep -v uid | sed 's/sec *//' | sed 's/\s\|\//:/g')
+		size=$(echo $email_detail | cut -d: -f1)
+		keyid=$(echo $email_detail | cut -d: -f2)
+		date=$(echo $email_detail | cut -d: -f3)
+
+		array_secret_key=("${array_secret_key[@]}" "FALSE" "${name:0:30}" "$email" "$size" "$keyid" "$date")
+	done < secretkeylist.tmp
+	rm secretkeylist.tmp
+}
+
+function encrypt {
+	gpg --encrypt --trust-model always -r $(echo $keylist | sed 's/:/ -r /g') $file
+}
+
+function decrypt {
+	gpg --output $(echo $file | cut -d\. -f1) --decrypt $file
+}
+
+function show_listpackets {
+	gpg --list-packets $file &> details.tmp
+	cat details.tmp | zenity --text-info --width=600 --height=350 --title="File details"
+	rm details.tmp
+}
+
+function show_public_keylist {
+	keylist=$(zenity --list --text "$keypub_count public key(s) found." --title "Public Key(s)" --checklist \
+				--width=700 --height=400 \
+				--print-column=3 \
+				--hide-column=$hide_column \
+				--separator=":" \
+				--column "Pick" --column "Name" --column "Email address" --column "Size" --column "KeyID" --column "Created" \
+				"${array_public_key[@]}")
+}
+
+function show_secret_keylist {
+	keylist=$(zenity --list --text " $keysec_count secret key(s) found." --title "Secret Key(s)" --checklist \
+				--width=700 --height=400 \
+				--print-column=3 \
+				--hide-column=$hide_column \
+				--separator=":" \
+				--column "Pick" --column "Name" --column "Email address" --column "Size" --column "KeyID" --column "Created" \
+				"${array_secret_key[@]}")
+}
+
+function show_about {
+	zenity --info --title="About EasyGPG" --text="EasyGPG v.0.1\n\nAuthor: Gianni 'guelfoweb' Amato\nEmail: guelfoweb@gmail.com\nKeyID: 490563B4\n\n\"Developed for personal use. I hope will be useful to others\".\n\nLicense: Beerware\n\nSource code: https://github.com/guelfoweb/easygpg"
+}
+
+# START
+import_public_keylist
+import_secret_keylist
+keypub_count=$((${#array_public_key[@]}/6))
+keysec_count=$((${#array_secret_key[@]}/6))
+gpg_check
+
+while true; do
+	# MAIN MENU
+	ans=$(zenity  --list --text "What do you want to do?" --radiolist --title="EasyGPG" --width=350 --height=350 \
+		--column "Pick" --column "Option" --column "Description" \
+		TRUE "Encrypt" "Encrypt file" \
+		FALSE "Decrypt" "Decrypt file" \
+		FALSE "Details" "Show file details" \
+		FALSE "Public keys" "List public keys" \
+		FALSE "Secret keys" "List secret keys" \
+		FALSE "Information" "About EasyGPG");
+
+	# ENCRYPT
+	if [ "$ans" = "Encrypt" ]; then
+		file=$(zenity --file-selection --title="Select a File")
+		if [ ! -z "$file" ]; then
+			hide_column=0
+			show_public_keylist
+			if [ ! -z "$keylist" ]; then
+				encrypt
+				zenity --info --title "Encrypted" --text "File has been encrypted."
+			fi
+		fi
+	fi
+
+	# DECRYPT
+	if [ "$ans" = "Decrypt" ]; then
+		file=$(zenity --file-selection --title="Select a File")
+		if [ ! -z "$file" ]; then
+			decrypt
+			zenity --info --title "Decrypted" --text "File has been decrypted."
+		fi
+	fi
+
+	# FILE DETAILS
+	if [ "$ans" = "Details" ]; then
+		file=$(zenity --file-selection --title="Select a File" --file-filter=""*.gpg" "*.asc" "*.pub" "*.sec" "*.key"")
+		if [ ! -z "$file" ]; then
+			show_listpackets
+		fi
+	fi
+
+	# LIST PUBLIC KEY(S)
+	if [ "$ans" = "Public keys" ]; then
+		hide_column=1
+		show_public_keylist
+	fi
+
+	# LIST SECRET KEY(S)
+	if [ "$ans" = "Secret keys" ]; then
+		hide_column=1
+		show_secret_keylist
+	fi
+
+	# INFO/ABOUT
+	if [ "$ans" = "Information" ]; then
+		show_about
+	fi
+
+	# EXIT
+	if [ -z "$ans" ]; then
+		exit
+	fi
+done
