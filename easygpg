@@ -2,7 +2,7 @@
 
 ################################################################
 #
-# EasyGPG v.0.1
+# EasyGPG v.0.1.1
 #
 # Author: Gianni 'guelfoweb' Amato
 # Email: guelfoweb@gmail.com
@@ -12,9 +12,13 @@
 #
 # License: Beerware
 #
-# Source code: https://github.com/guelfoweb/easygpg
-#
 ################################################################
+
+# TODO
+# [ ] encrypt option: file or text
+# [ ] decrypt option: file or text
+
+VERSION="0.1.1"
 
 function zenity_check {
 	path_to_executable=$(which zenity)
@@ -67,15 +71,15 @@ function import_secret_keylist {
 }
 
 function encrypt {
-	gpg --encrypt --trust-model always -r $(echo $keylist | sed 's/:/ -r /g') $file
+	gpg --encrypt --trust-model always -r $(echo $keylist | sed 's/:/ -r /g') --yes "$file"
 }
 
 function decrypt {
-	gpg --output $(echo $file | cut -d\. -f1) --decrypt $file
+	gpg --output $(echo "$file" | cut -d\. -f1) --decrypt --yes "$file"
 }
 
 function show_listpackets {
-	gpg --list-packets $file &> details.tmp
+	gpg --list-packets "$file" &> details.tmp
 	cat details.tmp | zenity --text-info --width=600 --height=350 --title="File details"
 	rm details.tmp
 }
@@ -83,43 +87,196 @@ function show_listpackets {
 function show_public_keylist {
 	keylist=$(zenity --list --text "$keypub_count public key(s) found." --title "Public Key(s)" --checklist \
 				--width=700 --height=400 \
+				--cancel-label=" Back" \
 				--print-column=3 \
 				--hide-column=$hide_column \
 				--separator=":" \
-				--column "Pick" --column "Name" --column "Email address" --column "Size" --column "KeyID" --column "Created" \
+				--column "" --column "Name" --column "Email address" --column "Size" --column "KeyID" --column "Created" \
 				"${array_public_key[@]}")
 }
 
 function show_secret_keylist {
 	keylist=$(zenity --list --text " $keysec_count secret key(s) found." --title "Secret Key(s)" --checklist \
 				--width=700 --height=400 \
+				--cancel-label=" Back" \
 				--print-column=3 \
 				--hide-column=$hide_column \
 				--separator=":" \
-				--column "Pick" --column "Name" --column "Email address" --column "Size" --column "KeyID" --column "Created" \
+				--column "" --column "Name" --column "Email address" --column "Size" --column "KeyID" --column "Created" \
 				"${array_secret_key[@]}")
 }
 
+function manage_keys {
+	while true; do
+		manage=$(zenity --list --text "What do you want to do?" --radiolist --title="EasyGPG - Manage keys" \
+							--width=350 --height=200 \
+							--cancel-label=" Back" \
+							--column "" --column "Option" --column "Description" \
+							TRUE "Import" "Import keys" \
+							FALSE "Export" "Export keys" \
+							FALSE "Remove" "Remove keys")
+
+		# IMPORT
+		if [ "$manage" = "Import" ]; then
+				opt=$(zenity --list --text "What do you want to do?" --radiolist --title="EasyGPG - Import keys" \
+								--width=350 --height=200 \
+								--cancel-label=" Back" \
+								--column "" --column "Option" --column "Description" \
+								TRUE "File" "Import by file" \
+								FALSE "Text" "Import by text")
+
+				# IMPORT BY TEXT
+				if [ "$opt" = "Text" ]; then
+					text_key=$(zenity --text-info --editable --title="Import text key" --width=600 --height=350)
+					if [ "$text_key" = "" ]; then break; fi
+					echo "$text_key" >> textkey.asc
+					gpg --import textkey.asc
+					rm textkey.asc
+					zenity --info --text="Text key has been imported"
+					init
+
+				# IMPORT BY FILE
+				elif [ "$opt" = "File" ]; then
+					file=$(zenity --file-selection --title="Select a File" \
+										--file-filter=""*.gpg" "*.asc" "*.pub" "*.sec" "*.key" "*.txt" "*.pgp"")
+					if [ ! -z "$file" ]; then
+						gpg --import "$file"
+						zenity --info --text="File key has been imported"
+						init
+					fi
+				else
+					break
+				fi
+
+		# EXPORT
+		elif [ "$manage" = "Export" ]; then
+				opt=$(zenity --list --text "What do you want to do?" --radiolist --title="EasyGPG - Export keys" \
+								--width=350 --height=200 \
+								--cancel-label=" Back" \
+								--column "" --column "Option" --column "Description" \
+								TRUE "All" "Export all keys" \
+								FALSE "Single" "Export single keys")
+
+				# EXPORT ALL KEYS
+				if [ "$opt" = "All" ]; then
+					timestamp=$(date +%s)
+					gpg -a --export >> pub_keys_$timestamp.asc
+					cat pub_keys_$timestamp.asc | zenity --text-info --title="$keypub_count public keys" \
+																	--width=600 --height=350 \
+																	--checkbox="Save file pub_keys_$timestamp.asc"
+					if [ "$?" -ne "0" ];then
+						rm pub_keys_$timestamp.asc
+					else
+						zenity --info --text="File has been exported"
+					fi
+				fi
+
+				# EXPORT SINGLE KEYS
+				if [ "$opt" = "Single" ]; then
+					timestamp=$(date +%s)
+					hide_column=0
+					show_public_keylist
+					if [ ! -z "$keylist" ]; then
+						nkeys=$(( $(echo $keylist | grep -o ":" | wc -l) +1 ))
+						gpg --export -a $(echo $keylist | sed 's/:/ /g') >> pub_keys_$timestamp.asc
+						cat pub_keys_$timestamp.asc | zenity --text-info --title="$nkeys single public keys" \
+																		--width=600 --height=350 \
+																		--checkbox="Save file pub_keys_$timestamp.asc"
+						if [ "$?" -ne "0" ]; then
+							rm pub_keys_$timestamp.asc
+						else
+							zenity --info --text="File has been exported"
+						fi
+					fi
+				fi
+
+		# REMOVE
+		elif [ "$manage" = "Remove" ]; then
+			while true; do
+				opt=$(zenity --list --text "What do you want to do?" --radiolist --title="EasyGPG - Remove keys" \
+									--width=350 --height=200 \
+									--cancel-label=" Back" \
+									--column "" --column "Option" --column "Description" \
+									TRUE "Public" "Remove public keys" \
+									FALSE "Private" "Remove private keys")
+
+				# REMOVE PUBLIC
+				if [ "$opt" = "Public" ]; then
+					hide_column=0
+					show_public_keylist
+					if [ ! -z "$keylist" ]; then
+
+						# Verify if email key is present in private key
+						check_in_secret_key="0"
+						echo $keylist | sed 's/:/\n/g' | while read line
+						do
+							for k in "${array_secret_key[@]}"
+								do
+									if [ "$k" == "$line" ] ; then
+										zenity --warning --text "$line is present for a private key.\nYou must first remove the private key."
+										check_in_secret_key="1"
+										break
+									fi
+								done
+							if [ "$check_in_secret_key" = "1" ]; then touch lock.tmp; break; fi
+						done
+
+						if [ ! -f "lock.tmp" ]; then
+							nkeys=$(( $(echo $keylist | grep -o ":" | wc -l) +1 ))
+							zenity --question --text "Are you sure you want delete $nkeys key(s)?"
+							if [ "$?" -eq "0" ]; then
+								gpg --delete-key --batch --yes $(echo $keylist | sed 's/:/ /g')
+								zenity --info --text="$nkeys key(s) has been deleted"
+								init
+							fi
+						else
+							rm lock.tmp
+						fi
+					fi
+		
+				# REMOVE PRIVATE
+				elif [ "$opt" = "Private" ]; then
+					echo "private"
+				else
+					break
+				fi
+			done
+
+		# RETURN TO MAIN MENU
+		else
+			break
+		fi
+	done
+}
+
 function show_about {
-	zenity --info --title="About EasyGPG" --text="EasyGPG v.0.1\n\nAuthor: Gianni 'guelfoweb' Amato\nEmail: guelfoweb@gmail.com\nKeyID: 490563B4\n\n\"Developed for personal use. I hope will be useful to others\".\n\nLicense: Beerware\n\nSource code: https://github.com/guelfoweb/easygpg"
+	zenity --info --title="About EasyGPG" --text="EasyGPG v."$VERSION"\n\nAuthor: Gianni 'guelfoweb' Amato\nEmail: guelfoweb@gmail.com\nKeyID: 490563B4\n\n\"Developed for personal use. I hope will be useful to others\".\n\nLicense: Beerware"
+}
+
+function init {
+	zenity_check
+	gpg_check
+	import_public_keylist
+	import_secret_keylist
+	keypub_count=$((${#array_public_key[@]}/6))
+	keysec_count=$((${#array_secret_key[@]}/6))
 }
 
 # START
-import_public_keylist
-import_secret_keylist
-keypub_count=$((${#array_public_key[@]}/6))
-keysec_count=$((${#array_secret_key[@]}/6))
-gpg_check
+init
 
 while true; do
 	# MAIN MENU
-	ans=$(zenity  --list --text "What do you want to do?" --radiolist --title="EasyGPG" --width=350 --height=350 \
-		--column "Pick" --column "Option" --column "Description" \
+	ans=$(zenity  --list --text "What do you want to do?" --radiolist --title="EasyGPG" \
+		--width=350 --height=350 \
+		--cancel-label=" Exit" \
+		--column "" --column "Option" --column "Description" \
 		TRUE "Encrypt" "Encrypt file" \
 		FALSE "Decrypt" "Decrypt file" \
 		FALSE "Details" "Show file details" \
 		FALSE "Public keys" "List public keys" \
 		FALSE "Secret keys" "List secret keys" \
+		FALSE "Manage keys" "Import/Export keys" \
 		FALSE "Information" "About EasyGPG");
 
 	# ENCRYPT
@@ -133,44 +290,42 @@ while true; do
 				zenity --info --title "Encrypted" --text "File has been encrypted."
 			fi
 		fi
-	fi
 
 	# DECRYPT
-	if [ "$ans" = "Decrypt" ]; then
+	elif [ "$ans" = "Decrypt" ]; then
 		file=$(zenity --file-selection --title="Select a File")
 		if [ ! -z "$file" ]; then
 			decrypt
 			zenity --info --title "Decrypted" --text "File has been decrypted."
 		fi
-	fi
 
 	# FILE DETAILS
-	if [ "$ans" = "Details" ]; then
-		file=$(zenity --file-selection --title="Select a File" --file-filter=""*.gpg" "*.asc" "*.pub" "*.sec" "*.key"")
+	elif [ "$ans" = "Details" ]; then
+		file=$(zenity --file-selection --title="Select a File" --file-filter=""*.gpg" "*.asc" "*.pub" "*.sec" "*.key" "*.pgp"")
 		if [ ! -z "$file" ]; then
 			show_listpackets
 		fi
-	fi
 
 	# LIST PUBLIC KEY(S)
-	if [ "$ans" = "Public keys" ]; then
+	elif [ "$ans" = "Public keys" ]; then
 		hide_column=1
 		show_public_keylist
-	fi
 
 	# LIST SECRET KEY(S)
-	if [ "$ans" = "Secret keys" ]; then
+	elif [ "$ans" = "Secret keys" ]; then
 		hide_column=1
 		show_secret_keylist
-	fi
 
 	# INFO/ABOUT
-	if [ "$ans" = "Information" ]; then
+	elif [ "$ans" = "Information" ]; then
 		show_about
-	fi
+
+	# MANAGE KEYS
+	elif [ "$ans" = "Manage keys" ]; then
+		manage_keys
 
 	# EXIT
-	if [ -z "$ans" ]; then
+	else
 		exit
 	fi
 done
